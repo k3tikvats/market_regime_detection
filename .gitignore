@@ -5,7 +5,7 @@
 /backend/data_pipeline/feature_engineering/_pycache_
 /backend/ml_service/_pycache_
 /backend/ml_service/models/_pycache_
-
+/backend/data_pipeline/__pycache__/
 # Frontend
 /node_modules
 /frontend/node_modules

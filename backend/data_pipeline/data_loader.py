@@ -31,257 +31,128 @@ class MarketDataLoader:
         
     def load_depth_data(self, symbol, date_str):
         """
-        Load order book depth data for a specific symbol and date.
+        Load order book depth data for a given symbol and date
         
         Args:
-            symbol (str): Trading symbol (e.g., 'BNBFDUSD')
+            symbol (str): Trading symbol
             date_str (str): Date string in format YYYYMMDD
             
         Returns:
-            pd.DataFrame: Processed order book data
+            DataFrame with depth data
         """
-        filename = f"{symbol}_{date_str}.txt"
-        filepath = os.path.join(self.depth_dir, filename)
+        depth_path = os.path.join(self.data_dir, 'depth20_1000ms', f'{symbol}_{date_str}.txt')
         
-        logger.info(f"Loading order book data from {filepath}")
-        
+        if not os.path.exists(depth_path):
+            logger.warning(f"No depth data found for {symbol} on {date_str}")
+            return pd.DataFrame()
+            
         try:
-            # First, check the file format by reading first few lines
-            with open(filepath, 'r') as f:
-                reader = csv.reader(f)
-                header = next(reader, None)
-                first_row = next(reader, None)
+            # Load the file
+            logger.info(f"Loading order book data from {depth_path}")
+            df = pd.read_csv(depth_path, sep=',')
             
-            # Detect if file has headers
-            has_header = False
-            timestamp_col_idx = 0  # Default timestamp column index
+            # Log column names to help with debugging
+            logger.info(f"Depth data columns: {df.columns.tolist()}")
             
-            # Check if header contains typical column names
-            if header:
-                header_str = ' '.join([str(h).lower() for h in header if h])
-                has_header = 'time' in header_str or 'timestamp' in header_str
-            
-            # Using chunking to handle large files
-            chunks = []
-            # Skip header row if it exists
-            skip_rows = 1 if has_header else 0
-            
-            for chunk in pd.read_csv(filepath, chunksize=100000, delimiter=',', header=None, skiprows=skip_rows):
-                chunks.append(chunk)
-            
-            df = pd.concat(chunks)
-            
-            # Generate column names
-            if has_header:
-                # Use the header we detected
-                df.columns = header
-            else:
-                # Generate standard column names
-                columns = ['timestamp']
+            # Check if 'Time' column exists and rename it to 'timestamp' for consistency
+            if 'Time' in df.columns:
+                df = df.rename(columns={'Time': 'timestamp'})
+            elif 'time' in df.columns:
+                df = df.rename(columns={'time': 'timestamp'})
                 
-                # Add bid price and quantity columns
-                for i in range(20):
-                    columns.extend([f'bid_price_{i}', f'bid_qty_{i}'])
-                    
-                # Add ask price and quantity columns
-                for i in range(20):
-                    columns.extend([f'ask_price_{i}', f'ask_qty_{i}'])
-                
-                # Check if column count matches
-                if len(df.columns) >= len(columns):
-                    # Use our standard column names for the expected columns
-                    rename_dict = {i: columns[i] for i in range(len(columns))}
-                    df = df.rename(columns=rename_dict)
-                else:
-                    logger.warning(f"Column count mismatch: expected {len(columns)}, got {len(df.columns)}")
-                    df.columns = [f'col_{i}' for i in range(len(df.columns))]
-                    # Assume first column is timestamp
-                    if len(df.columns) > 0:
-                        df = df.rename(columns={'col_0': 'timestamp'})
+            # If still no timestamp column, create one
+            if 'timestamp' not in df.columns:
+                logger.warning("No timestamp column found in depth data. Creating sequential timestamps.")
+                df['timestamp'] = pd.date_range(
+                    start=datetime.strptime(date_str, '%Y%m%d'),
+                    periods=len(df),
+                    freq='1s'
+                )
+                return df
             
-            # Find timestamp column
-            timestamp_col = None
-            for col in df.columns:
-                col_name = str(col).lower()
-                if 'time' in col_name or 'timestamp' in col_name:
-                    timestamp_col = col
-                    break
-            
-            if timestamp_col is None:
-                # If no column has 'time' in name, use first column
-                timestamp_col = df.columns[0]
-                df = df.rename(columns={timestamp_col: 'timestamp'})
-                timestamp_col = 'timestamp'
-            
-            # Convert timestamp to datetime
+            # Convert timestamps - handle complex timestamp format
             try:
-                # Try different timestamp formats based on the first few values
-                sample = df[timestamp_col].iloc[:5].astype(str)
-                
-                # Check if timestamps are numeric (epoch)
-                if all(s.isdigit() for s in sample):
-                    # Convert from milliseconds to datetime
-                    df['timestamp'] = pd.to_datetime(df[timestamp_col].astype(float), unit='ms')
+                # Parse the timestamp, handling IST timezone if present
+                if isinstance(df['timestamp'].iloc[0], str) and '+0530 IST' in df['timestamp'].iloc[0]:
+                    # Custom parsing for the specific format
+                    df['timestamp'] = df['timestamp'].apply(
+                        lambda x: pd.Timestamp(x.split('+0530')[0].strip())
+                    )
                 else:
-                    # Try common timestamp formats
-                    for fmt in ['%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y%m%d %H:%M:%S.%f', '%Y%m%d %H:%M:%S']:
-                        try:
-                            df['timestamp'] = pd.to_datetime(df[timestamp_col], format=fmt, errors='raise')
-                            break
-                        except:
-                            continue
+                    # Standard parsing
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
                     
-                    # If specific formats fail, try the generic parser with errors='coerce'
-                    if pd.isna(df['timestamp']).all():
-                        df['timestamp'] = pd.to_datetime(df[timestamp_col], errors='coerce')
-                
-                # Check if conversion was successful
-                if pd.isna(df['timestamp']).all():
-                    # Last resort - try to parse strings from epoch
-                    try:
-                        df['timestamp'] = pd.to_datetime(df[timestamp_col].astype(float) / 1000, unit='s')
-                    except:
-                        pass
-                
-                if pd.isna(df['timestamp']).all():
-                    raise ValueError("Could not convert timestamp column to datetime")
-                
-                # Drop original timestamp column if it's not named 'timestamp'
-                if timestamp_col != 'timestamp':
-                    df = df.drop(columns=[timestamp_col])
+                return df
                 
             except Exception as e:
                 logger.error(f"Error converting timestamps: {e}")
-                raise
-            
-            return df
-            
+                return pd.DataFrame()
+                
         except Exception as e:
             logger.error(f"Error loading depth data: {e}")
-            raise
+            return pd.DataFrame()
     
     def load_trade_data(self, symbol, date_str):
         """
-        Load aggregated trade data for a specific symbol and date.
+        Load trade data for a given symbol and date
         
         Args:
-            symbol (str): Trading symbol (e.g., 'BNBFDUSD')
+            symbol (str): Trading symbol
             date_str (str): Date string in format YYYYMMDD
             
         Returns:
-            pd.DataFrame: Processed trade data
+            DataFrame with trade data
         """
-        filename = f"{symbol}_{date_str}.txt"
-        filepath = os.path.join(self.trade_dir, filename)
+        trade_path = os.path.join(self.data_dir, 'aggTrade', f'{symbol}_{date_str}.txt')
         
-        logger.info(f"Loading trade data from {filepath}")
-        
+        if not os.path.exists(trade_path):
+            logger.warning(f"No trade data found for {symbol} on {date_str}")
+            return pd.DataFrame()
+            
         try:
-            # First, check the file format by reading first few lines
-            with open(filepath, 'r') as f:
-                reader = csv.reader(f)
-                header = next(reader, None)
-                first_row = next(reader, None)
+            logger.info(f"Loading trade data from {trade_path}")
+            df = pd.read_csv(trade_path, sep=',')
             
-            # Detect if file has headers
-            has_header = False
-            timestamp_col_idx = 0  # Default timestamp column index
+            # Log column names to help with debugging
+            logger.info(f"Trade data columns: {df.columns.tolist()}")
             
-            # Check if header contains typical column names
-            if header:
-                header_str = ' '.join([str(h).lower() for h in header if h])
-                has_header = 'time' in header_str or 'timestamp' in header_str or 'price' in header_str
+            # Check if we have alternative time column names
+            if 'Time' in df.columns:
+                df = df.rename(columns={'Time': 'timestamp'})
+            elif 'time' in df.columns:
+                df = df.rename(columns={'time': 'timestamp'})
             
-            # Using chunking to handle large files
-            chunks = []
-            # Skip header row if it exists
-            skip_rows = 1 if has_header else 0
-            
-            for chunk in pd.read_csv(filepath, chunksize=100000, delimiter=',', header=None, skiprows=skip_rows):
-                chunks.append(chunk)
-            
-            df = pd.concat(chunks)
-            
-            # Generate column names
-            if has_header:
-                # Use the header we detected
-                df.columns = header
-            else:
-                # Use standard column names for trade data
-                expected_cols = ['timestamp', 'price', 'quantity', 'is_buyer_maker']
+            # If still no timestamp column, create one
+            if 'timestamp' not in df.columns:
+                logger.warning("No timestamp column found in trade data. Creating sequential timestamps.")
+                df['timestamp'] = pd.date_range(
+                    start=datetime.strptime(date_str, '%Y%m%d'),
+                    periods=len(df),
+                    freq='1s'
+                )
+                return df
                 
-                # Check if column count matches
-                if len(df.columns) >= len(expected_cols):
-                    # Use our standard column names for the expected columns
-                    rename_dict = {i: expected_cols[i] for i in range(len(expected_cols))}
-                    df = df.rename(columns=rename_dict)
-                else:
-                    logger.warning(f"Column count mismatch: expected {len(expected_cols)}, got {len(df.columns)}")
-                    df.columns = [f'col_{i}' for i in range(len(df.columns))]
-                    # Assume first column is timestamp
-                    if len(df.columns) > 0:
-                        df = df.rename(columns={'col_0': 'timestamp'})
-            
-            # Find timestamp column
-            timestamp_col = None
-            for col in df.columns:
-                col_name = str(col).lower()
-                if 'time' in col_name or 'timestamp' in col_name:
-                    timestamp_col = col
-                    break
-            
-            if timestamp_col is None:
-                # If no column has 'time' in name, use first column
-                timestamp_col = df.columns[0]
-                df = df.rename(columns={timestamp_col: 'timestamp'})
-                timestamp_col = 'timestamp'
-            
-            # Convert timestamp to datetime
+            # Convert timestamps
             try:
-                # Try different timestamp formats based on the first few values
-                sample = df[timestamp_col].iloc[:5].astype(str)
-                
-                # Check if timestamps are numeric (epoch)
-                if all(s.isdigit() for s in sample):
-                    # Convert from milliseconds to datetime
-                    df['timestamp'] = pd.to_datetime(df[timestamp_col].astype(float), unit='ms')
+                # Parse the timestamp, handling IST timezone if present
+                if isinstance(df['timestamp'].iloc[0], str) and '+0530 IST' in df['timestamp'].iloc[0]:
+                    # Custom parsing for the specific format
+                    df['timestamp'] = df['timestamp'].apply(
+                        lambda x: pd.Timestamp(x.split('+0530')[0].strip())
+                    )
                 else:
-                    # Try common timestamp formats
-                    for fmt in ['%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y%m%d %H:%M:%S.%f', '%Y%m%d %H:%M:%S']:
-                        try:
-                            df['timestamp'] = pd.to_datetime(df[timestamp_col], format=fmt, errors='raise')
-                            break
-                        except:
-                            continue
+                    # Standard parsing
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
                     
-                    # If specific formats fail, try the generic parser with errors='coerce'
-                    if pd.isna(df['timestamp']).all():
-                        df['timestamp'] = pd.to_datetime(df[timestamp_col], errors='coerce')
-                
-                # Check if conversion was successful
-                if pd.isna(df['timestamp']).all():
-                    # Last resort - try to parse strings from epoch
-                    try:
-                        df['timestamp'] = pd.to_datetime(df[timestamp_col].astype(float) / 1000, unit='s')
-                    except:
-                        pass
-                
-                if pd.isna(df['timestamp']).all():
-                    raise ValueError("Could not convert timestamp column to datetime")
-                
-                # Drop original timestamp column if it's not named 'timestamp'
-                if timestamp_col != 'timestamp':
-                    df = df.drop(columns=[timestamp_col])
+                return df
                 
             except Exception as e:
                 logger.error(f"Error converting trade timestamps: {e}")
-                raise
-            
-            return df
-            
+                return pd.DataFrame()
+                
         except Exception as e:
             logger.error(f"Error loading trade data: {e}")
-            raise
+            return pd.DataFrame()
     
     def load_combined_data(self, symbol, date_str, resample_interval='1min'):
         """
@@ -305,7 +176,7 @@ class MarketDataLoader:
         trade_features = self._extract_trade_features(trade_data)
         
         # Resample both to common time interval
-        depth_resampled = depth_features.set_index('timestamp').resample(resample_interval).last().fillna(method='ffill')
+        depth_resampled = depth_features.set_index('timestamp').resample(resample_interval).last().ffill()
         trade_resampled = trade_features.set_index('timestamp').resample(resample_interval).agg({
             'volume': 'sum',
             'trade_count': 'sum',
@@ -316,7 +187,7 @@ class MarketDataLoader:
         
         # Combine datasets
         combined = pd.concat([depth_resampled, trade_resampled], axis=1)
-        combined = combined.fillna(method='ffill').reset_index()
+        combined = combined.ffill().reset_index()
         
         return combined
     

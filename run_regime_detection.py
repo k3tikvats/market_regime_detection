@@ -263,7 +263,7 @@ def generate_markdown_report(features, labels, evaluation_results, regime_charac
     output_path = Path(output_dir)
     report_path = output_path / "market_regime_analysis.md"
     
-    with open(report_path, "w") as f:
+    with open(report_path, "w", encoding="utf-8") as f:
         # Title
         f.write("# Market Regime Detection Analysis Report\n\n")
         f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -598,58 +598,6 @@ def parse_arguments():
     
     return parser.parse_args()
 
-if __name__ == "__main__":
-    # Parse arguments
-    args = parse_arguments()
-    
-    # Load features if provided
-    features_df = None
-    if args.features:
-        if os.path.exists(args.features):
-            if args.features.endswith('.csv'):
-                features_df = pd.read_csv(args.features, index_col=0, parse_dates=True)
-            elif args.features.endswith('.parquet'):
-                features_df = pd.read_parquet(args.features)
-            else:
-                logger.error(f"Unsupported file format: {args.features}. Use CSV or Parquet.")
-                sys.exit(1)
-                
-            logger.info(f"Loaded {len(features_df)} samples from {args.features}")
-        else:
-            logger.error(f"Features file not found: {args.features}")
-            sys.exit(1)
-    
-    # Run the regime detection pipeline
-    results = run_regime_detection(
-        features_df=features_df,
-        output_dir=args.output
-    )
-    
-    # Print path to the report
-    logger.info(f"Analysis complete. Report saved to {results['report_path']}")
-    logger.info(f"Visualizations saved to {args.output}")
-
-"""
-Market Regime Detection Pipeline
-
-This script demonstrates how to run the market regime detection pipeline 
-using both order book (depth20) and trade data (aggTrade).
-"""
-import os
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from datetime import datetime
-import logging
-
-from backend.data_pipeline.data_loader import MarketDataLoader
-from backend.data_pipeline.feature_engineering.feature_extractor import FeatureExtractor
-from backend.ml_service.regime_detector import RegimeDetector
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
 def main():
     """
     Main function to run the market regime detection pipeline.
@@ -688,8 +636,12 @@ def main():
     # Select features for clustering
     feature_cols = [col for col in features.columns if col != 'timestamp']
     
-    # Initialize regime detector with GMM model (you can change to KMeans or HDBSCAN)
-    regime_detector = RegimeDetector(model_type='gmm', n_clusters=4)
+    # Initialize regime detector with GMM model
+    regime_detector = MarketRegimeDetector(config={
+        'selected_model': 'gmm',
+        'gmm_components': 4,
+        'data_dir': data_directory
+    })
     
     # Train the model
     logger.info("Training regime detector...")
@@ -699,9 +651,13 @@ def main():
     logger.info("Predicting market regimes...")
     features['regime'] = regime_detector.predict(features[feature_cols])
     
-    # Get regime probabilities
-    if hasattr(regime_detector.model, 'predict_proba'):
-        probs = regime_detector.model.predict_proba(features[feature_cols])
+    # Get regime probabilities (for GMM only)
+    selected_model = regime_detector.selected_model_name
+    if selected_model == 'gmm' and hasattr(regime_detector.models[selected_model].model, 'predict_proba'):
+        logger.info("Calculating regime probabilities...")
+        probs = regime_detector.models[selected_model].model.predict_proba(
+            regime_detector.normalizer.transform(features[feature_cols])
+        )
         for i in range(probs.shape[1]):
             features[f'regime_prob_{i}'] = probs[:, i]
     
@@ -713,7 +669,7 @@ def main():
     output_file = f"regime_results_{symbol}_{start_date}_to_{end_date}.csv"
     features.to_csv(output_file, index=False)
     logger.info(f"Results saved to {output_file}")
-    
+
 def plot_regimes(features, symbol):
     """
     Plot price and detected regimes.
@@ -775,4 +731,32 @@ def plot_regimes(features, symbol):
     plt.close()
 
 if __name__ == "__main__":
-    main()
+    # Parse arguments
+    args = parse_arguments()
+    
+    # Load features if provided
+    features_df = None
+    if args.features:
+        if os.path.exists(args.features):
+            if args.features.endswith('.csv'):
+                features_df = pd.read_csv(args.features, index_col=0, parse_dates=True)
+            elif args.features.endswith('.parquet'):
+                features_df = pd.read_parquet(args.features)
+            else:
+                logger.error(f"Unsupported file format: {args.features}. Use CSV or Parquet.")
+                sys.exit(1)
+                
+            logger.info(f"Loaded {len(features_df)} samples from {args.features}")
+        else:
+            logger.error(f"Features file not found: {args.features}")
+            sys.exit(1)
+    
+    # Run the regime detection pipeline
+    results = run_regime_detection(
+        features_df=features_df,
+        output_dir=args.output
+    )
+    
+    # Print path to the report
+    logger.info(f"Analysis complete. Report saved to {results['report_path']}")
+    logger.info(f"Visualizations saved to {args.output}")

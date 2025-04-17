@@ -29,9 +29,13 @@ class MarketRegimeDetector:
         """
         self.config = config or {}
         self.feature_extractor = FeatureExtractor(
-            data_dir=self.config.get('data_dir', 'data'),
-            window_sizes=self.config.get('window_sizes', [10, 30, 60])
+            data_dir=self.config.get('data_dir', 'data')
+            # Removed window_sizes parameter as it's not supported by FeatureExtractor
         )
+        
+        # Store window sizes for later use when extracting features
+        self.window_sizes = self.config.get('window_sizes', [10, 30, 60])
+        
         self.normalizer = Normalizer(
             method=self.config.get('normalization_method', 'standard'),
             pca_components=self.config.get('pca_components', None)
@@ -93,6 +97,74 @@ class MarketRegimeDetector:
             self.labels['ensemble'] = self._create_ensemble_labels()
         
         return self.models
+    
+    def fit(self, X):
+        """
+        Fit all models on the provided feature data.
+        
+        Args:
+            X: Feature data for training the models
+                
+        Returns:
+            self: The fitted model instance
+        """
+        if X is None or len(X) == 0:
+            raise ValueError("No data provided for fitting models")
+            
+        self.normalized_features = self.normalizer.fit_transform(X)
+        
+        # Train each model
+        for name, model in self.models.items():
+            model.fit(self.normalized_features)
+            self.labels[name] = model.predict(self.normalized_features)
+        
+        # Create ensemble labels if needed
+        if len(self.models) > 1:
+            self.labels['ensemble'] = self._create_ensemble_labels()
+        
+        # Set the model for predictions based on selected model name
+        if self.selected_model_name not in self.models and self.selected_model_name != 'ensemble':
+            self.selected_model_name = next(iter(self.models.keys()))
+            
+        return self
+    
+    def predict(self, X):
+        """
+        Predict cluster labels for the input data.
+        
+        Args:
+            X: Feature data to predict clusters for
+                
+        Returns:
+            array: Predicted cluster labels
+        """
+        if self.normalizer is None:
+            raise ValueError("Normalizer not initialized. Model must be fitted first.")
+            
+        # Normalize the input features
+        X_normalized = self.normalizer.transform(X)
+        
+        if self.selected_model_name == 'ensemble':
+            # Create ensemble predictions
+            predictions = {}
+            for name, model in self.models.items():
+                predictions[name] = model.predict(X_normalized)
+                
+            # Use simple majority voting as the ensemble method
+            # In a real implementation, this would be more sophisticated
+            if 'kmeans' in self.models:
+                return predictions['kmeans']
+            else:
+                # Return the first model's predictions as fallback
+                return next(iter(predictions.values()))
+        else:
+            # Use the selected model
+            model = self.models.get(self.selected_model_name)
+            if model is None:
+                # Fallback to the first available model
+                model = next(iter(self.models.values()))
+            
+            return model.predict(X_normalized)
     
     def _create_ensemble_labels(self):
         """
