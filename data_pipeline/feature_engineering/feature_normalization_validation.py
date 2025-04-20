@@ -1,7 +1,7 @@
 # feature_normalization_validation.py
 import pandas as pd
 import numpy as np
-from backend.data_pipeline.feature_engineering.normalizer import Normalizer
+from data_pipeline.feature_engineering.normalizer import Normalizer
 import matplotlib.pyplot as plt
 
 def validate_normalization_pipeline():

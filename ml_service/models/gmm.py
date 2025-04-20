@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.mixture import GaussianMixture
-from backend.ml_service.models.base_model import BaseClusterModel
+from ml_service.models.base_model import BaseClusterModel
 
 class GMMModel(BaseClusterModel):
     """Gaussian Mixture Model implementation"""

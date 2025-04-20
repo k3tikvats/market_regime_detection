@@ -9,10 +9,10 @@ import argparse
 import logging
 
 # Import project components
-from backend.data_pipeline.feature_engineering.normalizer import Normalizer
-from backend.clustering_executor import ClusteringExecutor
-from backend.regime_analyzer import RegimeAnalyzer
-from backend.ml_service.regime_detector import MarketRegimeDetector
+from data_pipeline.feature_engineering.normalizer import Normalizer
+from clustering_executor import ClusteringExecutor
+from regime_analyzer import RegimeAnalyzer
+from ml_service.regime_detector import MarketRegimeDetector
 
 # Configure logging
 logging.basicConfig(

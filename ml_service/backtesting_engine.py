@@ -17,8 +17,8 @@ import sys
 
 # Import the models (assuming these are in the correct directory structure)
 from models.base_model import BaseModel
-from backend.ml_service.models.kmeans import KMeansModel
-from backend.ml_service.models.gmm import GMMModel
+from ml_service.models.kmeans import KMeansModel
+from ml_service.models.gmm import GMMModel
 from models.hdbscan import HDBSCANModel
 from data_pipeline.feature_engineering.feature_extractor import FeatureExtractor
 from data_pipeline.feature_engineering.normalizer import Normalizer

@@ -1,6 +1,6 @@
 import numpy as np
 import hdbscan
-from backend.ml_service.models.base_model import BaseClusterModel
+from ml_service.models.base_model import BaseClusterModel
 
 class HDBSCANModel(BaseClusterModel):
     """HDBSCAN clustering model implementation"""

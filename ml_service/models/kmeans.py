@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from backend.ml_service.models.base_model import BaseClusterModel
+from ml_service.models.base_model import BaseClusterModel
 
 class KMeansModel(BaseClusterModel):
     """K-Means clustering model implementation"""
