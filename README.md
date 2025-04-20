@@ -8,6 +8,13 @@ This repository contains a framework for detecting distinct market states (regim
 
 Market regimes can be broadly understood as distinct states of market behavior characterized by specific patterns in volatility, trend, liquidity, and other market dynamics. This system helps traders and researchers identify these regimes automatically, enabling strategy adaptation and risk management.
 
+## Documentation
+
+The complete documentation is available in the following formats:
+
+- [Project Report (PDF)](./report.pdf) - Detailed analysis and methodology
+- [Results Summary](./results/market_regime_analysis.md) - Summary of detected regimes and insights
+
 ## Features
 
 - **Comprehensive Feature Engineering**: 
