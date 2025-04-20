@@ -7,6 +7,10 @@ from sklearn.decomposition import PCA
 import umap
 import seaborn as sns
 from pathlib import Path
+import logging
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 from ml_service.models.kmeans import KMeansModel
 from ml_service.models.gmm import GMMModel
@@ -124,93 +128,61 @@ class ClusteringExecutor:
     
     def evaluate_models(self):
         """
-        Evaluate all clustering models using multiple metrics
+        Evaluate each trained clustering model.
         
         Returns:
-            DataFrame with evaluation results
+            pd.DataFrame: Evaluation metrics for each model
         """
-        if not self.labels:
-            raise ValueError("Models must be run before evaluation")
+        logger.info("Evaluating clustering models...")
         
-        print("Evaluating clustering models...")
+        # Store evaluation metrics
+        results = []
         
-        metrics = []
+        # Track if any models had more than one cluster
+        valid_model_found = False
         
-        for name, labels in self.labels.items():
-            print(f"Evaluating {name}...")
+        for model_name, labels in self.labels.items():
+            logger.info(f"Evaluating {model_name}...")
             
-            # Skip models with noise points for certain metrics
-            has_noise = isinstance(labels, np.ndarray) and -1 in labels
-            
-            # Convert Series to numpy array if necessary
-            labels_array = labels.values if isinstance(labels, pd.Series) else labels
-            
-            # Filter out noise points for metrics calculation
-            if has_noise:
-                valid_idx = labels_array != -1
-                if not np.any(valid_idx) or np.sum(valid_idx) <= 1:
-                    print(f"  Skipping {name} - not enough valid points")
-                    continue
-                
-                valid_features = self.normalized_features.iloc[valid_idx] if isinstance(self.normalized_features, pd.DataFrame) else self.normalized_features[valid_idx]
-                valid_labels = labels_array[valid_idx]
-            else:
-                valid_features = self.normalized_features
-                valid_labels = labels_array
-            
-            # Calculate number of unique clusters (excluding noise)
-            n_clusters = len(np.unique(valid_labels))
-            
-            # Skip if only one cluster
-            if n_clusters < 2:
-                print(f"  Skipping {name} - only one cluster detected")
+            # Only evaluate if there's more than one cluster
+            if len(np.unique(labels)) < 2:
+                logger.warning(f"  Skipping {model_name} - only one cluster detected")
                 continue
             
-            # Calculate evaluation metrics
-            try:
-                silhouette = silhouette_score(valid_features, valid_labels)
-            except Exception as e:
-                print(f"  Error calculating silhouette score: {e}")
-                silhouette = np.nan
+            valid_model_found = True
             
-            try:
-                davies_bouldin = davies_bouldin_score(valid_features, valid_labels)
-            except Exception as e:
-                print(f"  Error calculating Davies-Bouldin score: {e}")
-                davies_bouldin = np.nan
-            
-            try:
-                calinski_harabasz = calinski_harabasz_score(valid_features, valid_labels)
-            except Exception as e:
-                print(f"  Error calculating Calinski-Harabasz score: {e}")
-                calinski_harabasz = np.nan
+            # Calculate metrics
+            silhouette = silhouette_score(self.features, labels) if len(np.unique(labels)) > 1 else np.nan
+            db_score = davies_bouldin_score(self.features, labels) if len(np.unique(labels)) > 1 else np.nan
+            ch_score = calinski_harabasz_score(self.features, labels) if len(np.unique(labels)) > 1 else np.nan
             
             # Store results
-            metrics.append({
-                'model': name,
-                'n_clusters': n_clusters,
+            results.append({
+                'model': model_name,
+                'n_clusters': len(np.unique(labels)),
                 'silhouette_score': silhouette,
-                'davies_bouldin_score': davies_bouldin,
-                'calinski_harabasz_score': calinski_harabasz,
-                'has_noise': has_noise
+                'davies_bouldin_score': db_score,
+                'calinski_harabasz_score': ch_score
             })
+            
+            logger.info(f"  Silhouette Score: {silhouette:.4f}")
+            logger.info(f"  Davies-Bouldin Index: {db_score:.4f}")
+            logger.info(f"  Calinski-Harabasz Index: {ch_score:.4f}")
         
-        # Convert to DataFrame
-        self.evaluation_results = pd.DataFrame(metrics)
-        
-        # Sort by silhouette score (higher is better)
-        self.evaluation_results = self.evaluation_results.sort_values(
-            'silhouette_score', ascending=False
-        )
-        
-        print("Model evaluation results:")
-        print(self.evaluation_results)
-        
-        # Save results
-        self.evaluation_results.to_csv(self.output_dir / 'model_evaluation.csv', index=False)
-        
-        # Plot results
-        self._plot_evaluation_results()
+        # Create dataframe with results
+        if results:
+            self.evaluation_results = pd.DataFrame(results)
+            # Sort by silhouette score (higher is better)
+            self.evaluation_results = self.evaluation_results.sort_values(
+                by='silhouette_score', ascending=False
+            ).reset_index(drop=True)
+        else:
+            # Create an empty DataFrame with the expected columns if no valid models were found
+            self.evaluation_results = pd.DataFrame(columns=[
+                'model', 'n_clusters', 'silhouette_score', 
+                'davies_bouldin_score', 'calinski_harabasz_score'
+            ])
+            logger.warning("No valid clustering models found - all detected only one cluster")
         
         return self.evaluation_results
     

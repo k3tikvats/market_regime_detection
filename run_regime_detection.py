@@ -13,7 +13,7 @@ from data_pipeline.feature_engineering.normalizer import Normalizer
 from clustering_executor import ClusteringExecutor
 from regime_analyzer import RegimeAnalyzer
 from ml_service.regime_detector import MarketRegimeDetector
-
+from data_pipeline.feature_engineering.feature_extractor import FeatureExtractor
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -21,127 +21,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger('market_regime_detection')
 
-def generate_synthetic_features(n_samples=1000, n_features=20):
-    """
-    Generate synthetic market data features for testing
-    
-    Args:
-        n_samples: Number of samples
-        n_features: Number of features
-        
-    Returns:
-        DataFrame with synthetic features
-    """
-    logger.info(f"Generating {n_samples} synthetic samples with {n_features} features")
-    
-    # Create a datetime index
-    start_date = datetime.now() - timedelta(days=5)
-    minutes = pd.date_range(start=start_date, periods=n_samples, freq='1min')
-    
-    # Generate base price series with trends and reversals
-    np.random.seed(42)
-    
-    # Create different market regimes
-    regime_lengths = [100, 200, 150, 200, 350]
-    regimes = []
-    
-    for length in regime_lengths:
-        if len(regimes) >= n_samples:
-            break
-        regimes.extend([len(regimes) // 100] * min(length, n_samples - len(regimes)))
-    
-    regimes = regimes[:n_samples]
-    
-    # Generate price series with different behavior in each regime
-    price = 100.0
-    prices = []
-    returns = []
-    volatilities = []
-    
-    for i in range(n_samples):
-        regime = regimes[i]
-        
-        # Different volatility per regime
-        if regime == 0:  # Low volatility, slight uptrend
-            volatility = 0.0005
-            drift = 0.0002
-        elif regime == 1:  # High volatility, strong uptrend
-            volatility = 0.002
-            drift = 0.001
-        elif regime == 2:  # Medium volatility, mean-reverting
-            volatility = 0.001
-            drift = -0.0003 if price > 105 else 0.0003
-        elif regime == 3:  # High volatility, downtrend
-            volatility = 0.0025
-            drift = -0.001
-        else:  # Low volatility, sideways
-            volatility = 0.0004
-            drift = 0.0
-        
-        # Generate return
-        ret = np.random.normal(drift, volatility)
-        price *= (1 + ret)
-        
-        prices.append(price)
-        returns.append(ret)
-        volatilities.append(volatility)
-    
-    # Create base features DataFrame
-    features = {
-        'price': prices,
-        'returns': returns,
-        'volatility': volatilities,
-        'spread': [0.01 + 0.03 * (0.8 if r == 1 or r == 3 else 0.3) + 0.01 * np.random.rand() for r in regimes],
-        'depth': [1000 * (0.5 if r == 1 or r == 3 else 1.5) + 200 * np.random.rand() for r in regimes],
-        'volume': [100 * (2.0 if r == 1 or r == 3 else 0.8) + 50 * np.random.rand() for r in regimes],
-        'volume_imbalance': [0.2 * np.random.randn() + (0.3 if r == 1 else -0.3 if r == 3 else 0.0) for r in regimes],
-        'mid_price': prices.copy(),
-    }
-    
-    # Add bid/ask prices and quantities
-    features['bid_price_0'] = [p - s/2 for p, s in zip(prices, features['spread'])]
-    features['ask_price_0'] = [p + s/2 for p, s in zip(prices, features['spread'])]
-    features['bid_qty_0'] = [d * (0.8 + 0.4 * np.random.rand()) for d in features['depth']]
-    features['ask_qty_0'] = [d * (0.8 + 0.4 * np.random.rand()) for d in features['depth']]
-    
-    # Add more synthetic features
-    features['price_zscore_10'] = np.random.randn(n_samples)  # Synthetic Z-score
-    features['price_zscore_30'] = np.random.randn(n_samples)  # Synthetic Z-score
-    features['volatility_10'] = [v * 10 * (0.8 + 0.4 * np.random.rand()) for v in volatilities]
-    features['volatility_30'] = [v * 30 * (0.8 + 0.4 * np.random.rand()) for v in volatilities]
-    features['volatility_60'] = [v * 60 * (0.8 + 0.4 * np.random.rand()) for v in volatilities]
-    
-    # Add momentum features - ensuring they have the correct length
-    features['momentum_10'] = features['returns'].copy()  # Placeholder with correct length
-    for i in range(n_samples):
-        start_idx = max(0, i-10)
-        features['momentum_10'][i] = sum(features['returns'][start_idx:i+1]) / min(10, i+1)
-        
-    features['momentum_30'] = features['returns'].copy()  # Placeholder with correct length
-    for i in range(n_samples):
-        start_idx = max(0, i-30)
-        features['momentum_30'][i] = sum(features['returns'][start_idx:i+1]) / min(30, i+1)
-    
-    # Add liquidity features
-    features['cum_bid_qty'] = [qty * 5 for qty in features['bid_qty_0']]  # Synthetic cumulative depth
-    features['cum_ask_qty'] = [qty * 5 for qty in features['ask_qty_0']]  # Synthetic cumulative depth
-    
-    # Create DataFrame with datetime index
-    df = pd.DataFrame(features, index=minutes)
-    
-    # Verify all columns have the same length
-    for col in df.columns:
-        if len(df[col]) != n_samples:
-            logger.error(f"Column {col} has incorrect length: {len(df[col])} vs expected {n_samples}")
-    
-    # Add noise to make features more realistic
-    for col in df.columns:
-        if col != 'price' and col != 'mid_price':
-            noise_factor = 0.05
-            df[col] = df[col] * (1 + noise_factor * np.random.randn(n_samples))
-    
-    logger.info(f"Generated synthetic data with shape {df.shape}")
-    return df
 
 def run_regime_detection(features_df=None, output_dir="./results"):
     """
@@ -157,25 +36,41 @@ def run_regime_detection(features_df=None, output_dir="./results"):
     # Create output directory
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
+
+    if features_df is None or features_df.empty:
+        logger.error("No feature data provided. Please ensure feature extraction succeeded.")
+        raise ValueError("No feature data provided.")
     
-    # Generate synthetic data if needed
-    if features_df is None:
-        logger.info("No feature data provided, generating synthetic data")
-        features_df = generate_synthetic_features(n_samples=1000, n_features=20)
+    # Store the original index for later use
+    original_index = features_df.index
+    
+    # Select only numeric columns for normalization and clustering
+    logger.info("Selecting numeric columns for modeling")
+    features_numeric = features_df.select_dtypes(include=[np.number])
+    logger.info(f"Selected {len(features_numeric.columns)} numeric features out of {len(features_df.columns)} total columns")
+    
+    # Data validation: Check if features have variation, but use a much smaller threshold
+    feature_std = features_numeric.std()
+    zero_var_features = feature_std[feature_std <= 1e-8].index.tolist()  # Much smaller threshold
+    if zero_var_features:
+        logger.warning(f"Found {len(zero_var_features)} features with zero or near-zero variance")
+        logger.warning(f"This may cause clustering algorithms to fail: {zero_var_features[:5]}")
+        # Drop zero variance features
+        features_numeric = features_numeric.drop(columns=zero_var_features)
+        logger.info(f"Dropped zero-variance features, new shape: {features_numeric.shape}")
         
-        # Save generated features
-        features_path = output_path / "synthetic_features.csv"
-        features_df.to_csv(features_path)
-        logger.info(f"Saved synthetic features to {features_path}")
+        if features_numeric.empty:
+            logger.error("No valid features remaining after dropping zero-variance features")
+            raise ValueError("No valid features for clustering")
     
     # 1. Normalize features
     logger.info("Normalizing features")
     normalizer = Normalizer(method="standard")
-    normalized_features = normalizer.fit_transform(features_df)
+    normalized_features = normalizer.fit_transform(features_numeric)
     
     # 2. Run clustering
     logger.info("Running clustering models")
-    cluster_executor = ClusteringExecutor(features_df)
+    cluster_executor = ClusteringExecutor(features_numeric)
     
     # Apply additional normalization if needed (e.g., PCA)
     normalized_features = cluster_executor.normalize_features(
@@ -189,6 +84,28 @@ def run_regime_detection(features_df=None, output_dir="./results"):
     
     # Evaluate models
     evaluation_results = cluster_executor.evaluate_models()
+    
+    # Check if any valid models were found
+    if evaluation_results.empty:
+        logger.warning("No valid clustering models found - all detected only one cluster")
+        logger.warning("This suggests the feature data doesn't have enough variation")
+        logger.warning("Try with different features or parameters")
+        
+        # Create a basic report with the issue
+        report_path = generate_basic_report(features_df, output_dir)
+        
+        return {
+            "features": features_df,
+            "normalized_features": normalized_features,
+            "labels": labels_dict,
+            "best_model": None,
+            "evaluation_results": evaluation_results,
+            "regime_characteristics": {},
+            "transition_matrix": None,
+            "report_path": report_path
+        }
+        
+    # Continue with normal flow if models were found
     best_model = cluster_executor.get_best_model(metric='silhouette_score')
     logger.info(f"Best clustering model: {best_model}")
     
@@ -242,6 +159,80 @@ def run_regime_detection(features_df=None, output_dir="./results"):
         "transition_matrix": transition_matrix,
         "report_path": report_path
     }
+
+def generate_basic_report(features_df, output_dir):
+    """
+    Generate a basic report when clustering fails
+    
+    Args:
+        features_df: DataFrame with features
+        output_dir: Directory to save the report
+        
+    Returns:
+        Path to the saved report
+    """
+    output_path = Path(output_dir)
+    report_path = output_path / "market_regime_analysis.md"
+    
+    with open(report_path, "w", encoding="utf-8") as f:
+        # Title
+        f.write("# Market Regime Detection Analysis Report\n\n")
+        f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        # Error notification
+        f.write("## ⚠️ Clustering Issue Detected\n\n")
+        f.write("The clustering algorithms could not identify distinct market regimes in the provided data. ")
+        f.write("All clustering models detected only a single cluster, which suggests that:\n\n")
+        
+        f.write("1. The feature data might not have enough variation to distinguish different regimes\n")
+        f.write("2. The selected features might not effectively capture market regime differences\n")
+        f.write("3. The normalization process might be affecting the clustering performance\n\n")
+        
+        # Data description
+        f.write("## Data Overview\n\n")
+        f.write(f"- **Number of samples**: {len(features_df)}\n")
+        f.write(f"- **Number of features**: {len(features_df.columns)}\n")
+        
+        if isinstance(features_df.index, pd.DatetimeIndex):
+            f.write(f"- **Time period**: {features_df.index[0]} to {features_df.index[-1]}\n\n")
+        
+        # Statistical summary
+        f.write("## Feature Statistics\n\n")
+        
+        # Get numeric features
+        numeric_features = features_df.select_dtypes(include=[np.number])
+        
+        # Create a summary table for the first 10 features
+        f.write("| Feature | Mean | Std | Min | Max | Zero Variance? |\n")
+        f.write("|---------|------|-----|-----|-----|---------------|\n")
+        
+        for col in numeric_features.columns[:10]:
+            mean = numeric_features[col].mean()
+            std = numeric_features[col].std()
+            min_val = numeric_features[col].min()
+            max_val = numeric_features[col].max()
+            zero_var = "Yes" if std <= 1e-6 else "No"
+            
+            f.write(f"| {col} | {mean:.4f} | {std:.4f} | {min_val:.4f} | {max_val:.4f} | {zero_var} |\n")
+        
+        if len(numeric_features.columns) > 10:
+            f.write(f"\n*Showing 10 of {len(numeric_features.columns)} features*\n")
+        
+        # Recommendations
+        f.write("\n## Recommendations\n\n")
+        f.write("To improve cluster detection and identify market regimes:\n\n")
+        f.write("1. **Feature Engineering**: Create additional features that might better capture market regimes\n")
+        f.write("2. **Feature Selection**: Try different sets of features or add more domain-specific indicators\n")
+        f.write("3. **Data Collection**: Consider using a different time period or higher granularity data\n")
+        f.write("4. **Preprocessing**: Try different normalization methods or apply dimensionality reduction\n")
+        f.write("5. **Clustering Parameters**: Adjust clustering algorithms' parameters (min_cluster_size, etc.)\n")
+        
+        f.write("\n---\n\n")
+        f.write("© Market Regime Detection Analysis | Generated on ")
+        f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    
+    logger.info(f"Basic report generated at {report_path}")
+    return report_path
 
 def generate_markdown_report(features, labels, evaluation_results, regime_characteristics, 
                            transition_matrix, best_model, output_dir):
@@ -653,7 +644,8 @@ def main():
     
     # Get regime probabilities (for GMM only)
     selected_model = regime_detector.selected_model_name
-    if selected_model == 'gmm' and hasattr(regime_detector.models[selected_model].model, 'predict_proba'):
+    if (selected_model == 'gmm' and 
+        hasattr(regime_detector.models[selected_model].model, 'predict_proba')):
         logger.info("Calculating regime probabilities...")
         probs = regime_detector.models[selected_model].model.predict_proba(
             regime_detector.normalizer.transform(features[feature_cols])
@@ -732,31 +724,61 @@ def plot_regimes(features, symbol):
 
 if __name__ == "__main__":
     # Parse arguments
-    args = parse_arguments()
+    # args = parse_arguments()
     
-    # Load features if provided
-    features_df = None
-    if args.features:
-        if os.path.exists(args.features):
-            if args.features.endswith('.csv'):
-                features_df = pd.read_csv(args.features, index_col=0, parse_dates=True)
-            elif args.features.endswith('.parquet'):
-                features_df = pd.read_parquet(args.features)
-            else:
-                logger.error(f"Unsupported file format: {args.features}. Use CSV or Parquet.")
-                sys.exit(1)
+    # # Load features if provided
+    # features_df = None
+    # if args.features:
+    #     if os.path.exists(args.features):
+    #         if args.features.endswith('.csv'):
+    #             features_df = pd.read_csv(args.features, index_col=0, parse_dates=True)
+    #         elif args.features.endswith('.parquet'):
+    #             features_df = pd.read_parquet(args.features)
+    #         else:
+    #             logger.error(f"Unsupported file format: {args.features}. Use CSV or Parquet.")
+    #             sys.exit(1)
                 
-            logger.info(f"Loaded {len(features_df)} samples from {args.features}")
-        else:
-            logger.error(f"Features file not found: {args.features}")
-            sys.exit(1)
+    #         logger.info(f"Loaded {len(features_df)} samples from {args.features}")
+    #     else:
+    #         logger.error(f"Features file not found: {args.features}")
+    #         sys.exit(1)
+
     
-    # Run the regime detection pipeline
+    # if features_df is None or features_df.empty:
+    #     logger.error("Feature extraction failed. No features generated from actual data.")
+    #     exit(1)
+    
+    # # Run the regime detection pipeline
+    # results = run_regime_detection(
+    #     features_df=features_df,
+    #     output_dir=args.output
+    # )
+    
+    # # Print path to the report
+    # logger.info(f"Analysis complete. Report saved to {results['report_path']}")
+    # logger.info(f"Visualizations saved to {args.output}")
+
+    symbol = "BNBFDUSD"  # Or your symbol
+    start_date = "20250314"
+    end_date = "20250317"
+    resample_interval = "5min"
+    data_directory = "data"
+
+    # Extract features from your actual data
+    feature_extractor = FeatureExtractor(data_dir=data_directory)
+    features_df = feature_extractor.extract_multi_day_features(
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
+        resample_interval=resample_interval,
+        window_sizes=[5, 15, 30]
+    )
+
+    # Run the regime detection pipeline on your real data
     results = run_regime_detection(
         features_df=features_df,
-        output_dir=args.output
+        output_dir="./results"
     )
-    
-    # Print path to the report
+
     logger.info(f"Analysis complete. Report saved to {results['report_path']}")
-    logger.info(f"Visualizations saved to {args.output}")
+    logger.info(f"Visualizations saved to ./results")
