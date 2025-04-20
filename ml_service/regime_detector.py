@@ -12,8 +12,8 @@ from datetime import datetime
 from .models.kmeans import KMeansModel
 from .models.gmm import GMMModel
 from .models.hdbscan import HDBSCANModel
-from ..data_pipeline.feature_engineering.feature_extractor import FeatureExtractor
-from ..data_pipeline.feature_engineering.normalizer import Normalizer
+from data_pipeline.feature_engineering.feature_extractor import FeatureExtractor
+from data_pipeline.feature_engineering.normalizer import Normalizer
 
 class MarketRegimeDetector:
     """

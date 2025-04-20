@@ -20,11 +20,11 @@ import logging
 from datetime import datetime
 
 # Import project modules
-from backend.data_pipeline.feature_engineering.normalizer import Normalizer
-from backend.data_pipeline.feature_engineering.feature_normalization_validation import validate_normalization_pipeline
-from backend.clustering_executor import ClusteringExecutor
-from backend.regime_analyzer import RegimeAnalyzer
-from backend.ml_service.regime_detector import RegimeDetector
+from data_pipeline.feature_engineering.normalizer import Normalizer
+from data_pipeline.feature_engineering.feature_normalization_validation import validate_normalization_pipeline
+from clustering_executor import ClusteringExecutor
+from regime_analyzer import RegimeAnalyzer
+from ml_service.regime_detector import RegimeDetector
 
 # Configure logging
 logging.basicConfig(
