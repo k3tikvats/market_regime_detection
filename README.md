@@ -205,9 +205,9 @@ If you use this code in your research or project, please cite:
 
 ```
 @software{market_regime_detection,
-  author = {Your Name},
+  author = {Kartik vats},
   title = {Market Regime Detection},
   year = {2025},
-  url = {https://github.com/yourusername/market-regime-detection}
+  url = {https://github.com/k3tikvats/market-regime-detection}
 }
 ```
